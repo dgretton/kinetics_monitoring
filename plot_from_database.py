@@ -1,59 +1,64 @@
 import sqlite3
 import matplotlib.pyplot as plt
 from datetime import datetime
-#from easygui import msgbox # I think this doens't work on mac?
-import pdb
 import sys, os
 import math
 import csv
+try:
+    from easygui import msgbox
+except Exception:
+    def msgbox(_):
+        pass
+from tkinter import Tk
+from tkinter.filedialog import askopenfilename
 
 number_of_turb = 96
 
-def name_well_96(x):
-    column = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
-    #return column[x%8-1]+'%02d' % int(math.floor((x-1)/8)+1)
-    return column[x%8-1]+ str(int(math.floor((x-1)/8)+1))       # Danger: database wells are not all three characters
+if len(sys.argv) < 2:
+    msg = 'Must supply user name as first argument.'
+    print(msg)
+    msgbox(msg)
+    exit()
+user = sys.argv[1]
+if not any((user.upper() == u.upper() for u in os.listdir('Users'))):
+    msg = 'User name ' + user + ' not recognized. These are the users I know:\n\n' + '\n'.join(os.listdir('Users'))
+    print(msg)
+    msgbox(msg)
+    exit()
 
-def line_property(ln):
-    try:
-        return ln.split(':')[1].strip()
-    except IndexError:
-        print('you need to have colons in your config lines')
-        exit()
-with open('params.cfg') as f:
-    paramlist = list(f.readlines())
-def propty(name):
-    for line in paramlist:
-        if name.lower() in line.lower():
-            return line_property(line)
-    else:
-        print('property "' + name + '" not found')
-        raise ValueError()
+this_user_dir = os.path.abspath('Users/' + user)
+def filepaths(directory):
+    for root, dirs, filenames in os.walk(directory):
+        for filename in filenames:
+            yield os.path.join(root, filename)
+dbs = (filepath for filepath in filepaths(this_user_dir)
+        if filepath.lower().endswith('.db'))
+latest = max(dbs, key=os.path.getctime)
+Tk().withdraw() # keep the window from appearing
+db_name = askopenfilename(initialdir=os.path.dirname(latest), title="Select database file", filetypes=((".db files","*.db"),("all files","*.*")))
+if not db_name:
+    print('Cancel.')
+    exit()
 
+conn = sqlite3.connect(db_name)
+c = conn.cursor()
 try:
-    db_name = sys.argv[1]
-    conn = sqlite3.connect(db_name)
-    c = conn.cursor()
     c.execute('select count(distinct plate_id) from measurements')
-    num_plates, = c.fetchone()
-    c.execute('select distinct data_type from measurements')
-    protocols = [p for p, in c.fetchall()]
-except IndexError:
-    try:
-        db_name = propty('database')
-        num_plates = int(propty('plates'))
-        protocols = [s.strip() for s in propty('protocols').split(',')]
-        print('\nUSING PARAMETERS FROM PARAMS.CFG, hopefully that\'s what '
-            'you want.\n(if not, specify with first argument, e.g. below)\n\n\t'
-            'python plot_from_database.py mydatabasename.db\n')
-        conn = sqlite3.connect(db_name)
-        c = conn.cursor()
-    except Exception:
-        print('Could not get database from params.cfg, edit that file or specify database '
-            'with first argument, e.g.\n\npython plot_from_database.py mydatabasename.db)\n')
-        exit()
+except sqlite3.OperationalError:
+    msg = 'Selected database doesn\'t have a "measurements" table.'
+    print(msg)
+    msgbox(msg)
+    exit()
+num_plates, = c.fetchone()
+c.execute('select distinct data_type from measurements')
+protocols = [p for p, in c.fetchall()]
 
-print('\n** Database: ' + db_name + ' **\n')
+print('\n** Database: ' + os.path.basename(db_name) + ' **\n')
+
+def create_if_needed(dirname):
+    if not os.path.exists(dirname):
+        os.mkdir(dirname)
+    return dirname
 
 for plate in range(1, num_plates+1):
     for type in protocols:
@@ -109,18 +114,18 @@ for plate in range(1, num_plates+1):
         print(len(readings_list), "entries fetched")
     
         fig1.tight_layout()
-        plt.savefig(os.path.join('graphs', db_name[:-3]+'_plate' + str(plate) + "_" + type + ".png"), dpi = 200)
+        graphs_dir = create_if_needed(os.path.abspath(os.path.join(os.path.dirname(db_name), 'graphs')))
+        plt.savefig(os.path.join(graphs_dir, os.path.basename(db_name)[:-3]+'_plate' + str(plate) + "_" + type + ".png"), dpi = 200)
         plt.close(fig1)
         
         # write data to a file
-        csvfile = open(os.path.join('excel', db_name[:-3]+'_reader_plate_' + str(plate)+"_"+type+'.csv'), 'w')
+        csvs_dir = create_if_needed(os.path.join(os.path.dirname(db_name), 'spreadsheets'))
+        csvfile = open(os.path.join(csvs_dir, os.path.basename(db_name)[:-3]+'_reader_plate_' + str(plate)+"_"+type+'.csv'), 'w')
         csvwriter = csv.writer(csvfile)
         for d in csv_data:
             csvwriter.writerow(d)    
         csvfile.close()  
 
-# We can also close the connection if we are done with it.
-# Just be sure any changes have been committed or they will be lost.
 conn.close()
 
 

@@ -2,7 +2,7 @@
 
 import sys, os, time, logging, types, sqlite3
 import pdb
-from easygui import msgbox
+from easygui import msgbox, ccbox
 
 this_file_dir = os.path.dirname(__file__)
 pyham_methods_dir = os.path.abspath(os.path.join(this_file_dir, '..'))
@@ -19,8 +19,6 @@ from basic_pace_181024 import ( oemerr,
     tip_pick_up_96, tip_eject_96, aspirate_96, dispense_96,
     resource_list_with_prefix, read_plate, add_robot_level_log, add_stderr_logging,
     run_async, yield_in_chunks, log_banner)
-
-
 
 def ensure_meas_table_exists(db_conn):
     '''
@@ -56,14 +54,22 @@ def db_add_plate_data(db_name, plate_data, data_type, plate):
         reading = plate_data.value_at(*plate.well_coords(read_well))
 
         data = (filename, plate_id, timestamp, well, reading, data_type)
-        #data = (filename, plate, timestamp, well, reading, data_type)
         c.execute("INSERT INTO measurements VALUES (?,?,?,?,?,?)", data)
     db_conn.commit()
     db_conn.close()
-    
+
+def create_if_needed(dirname):
+    if not os.path.exists(dirname):
+        os.mkdir(dirname)
+    return dirname
+
 if __name__ == '__main__':
-    local_log_dir = os.path.join(this_file_dir, 'log')
-    main_logfile = os.path.join(local_log_dir, 'main.log')
+    users_dir = create_if_needed(os.path.join(this_file_dir, 'Users'))
+    local_log_dir = create_if_needed(os.path.join(this_file_dir, 'log'))
+    with open(os.path.expanduser('~\\.roboid')) as f:
+        roboid = f.read()
+    assert roboid in ('00001', '00002')
+    main_logfile = os.path.join(local_log_dir, roboid + '_main.log')
     logging.basicConfig(filename=main_logfile, level=logging.DEBUG, format='[%(asctime)s] %(name)s %(levelname)s %(message)s')
     add_robot_level_log()
     add_stderr_logging()
@@ -73,7 +79,26 @@ if __name__ == '__main__':
         except IndexError:
             print('you need to have colons in your config lines')
             exit()
-    with open('params.cfg') as f:
+
+    if len(sys.argv) < 2:
+        msg = 'Must supply user name as first argument.'
+        print(msg)
+        msgbox(msg)
+        exit()
+    user = sys.argv[1]
+    new_user = not any((user.upper() == u.upper() for u in os.listdir(users_dir)))
+    if new_user and not ccbox('No known user "' + user + '." Create new user?'):
+        exit()
+
+    paramsfile = 'params.cfg'
+    for arg in sys.argv[2:]:
+        if arg[0] == '-':
+            continue
+        if '.cfg' in arg:
+            paramsfile = arg
+            break
+
+    with open(paramsfile) as f:
         paramlist = list(f.readlines())
     def propty(name):
         for line in paramlist:
@@ -84,39 +109,34 @@ if __name__ == '__main__':
             raise ValueError()
     num_plates = int(propty('plates'))
     protocols = [s.strip() for s in propty('protocols').split(',')]
-    try:
-        db_name = propty('database')
-    except ValueError:
-        db_name = os.path.join(this_file_dir, __file__.split('.')[0] + '.db')
-    roboid = None
-    try:
-        roboid = propty('robot name')
-    except ValueError:
-        pass
-    try:
-        roboid = '0000' + str(int(roboid))
-    except ValueError:
-        pass
-    if roboid not in ('00001', '00002'):
-        msgbox('Robot id not specified or invalid, using default robot id 00001')
-        roboid = '00001'
-    msgbox('Please confirm the following parameters from params.cfg:'
+    exp_name = propty('experiment name')
+    this_user_dir = create_if_needed(os.path.join(users_dir, user))
+    exp_dir = os.path.join(this_user_dir, exp_name)
+    db_name = os.path.join(exp_dir, exp_name + '_' + roboid + '.db')
+    if not ccbox('Please confirm the following parameters from ' + paramsfile + ': (if this isn\'t the params file you wanted, specify with 2nd argument)' +
+            '\nUser name: ' + user + ('\n\n'+'\n'.join(log_banner('WELCOME NEW USER!')) + '\n' if new_user else '') +
+            '\nUnique experiment name: ' + exp_name +
             '\nNumber of plates: ' + str(num_plates) +
             '\nPlate reader protocols: ' + str(protocols) +
-            '\nName of database where data will be appended: ' + db_name +
-            '\nRobot in use (00001 or 00002): ' + roboid)
-    if not os.path.exists(local_log_dir):
-        os.mkdir(local_log_dir)
+            '\nName of database where data will be appended: \n<this directory>\\' + db_name.replace('\\', '\n\t\\')):
+        exit()
+    create_if_needed(exp_dir)
+
+    with open(os.path.join(exp_dir, exp_name + '_params.cfg'), 'w+') as f:
+        with open(paramsfile) as pf:
+            f.write(pf.read()) # save copy of param configuration
+            f.write('\n\nRobot used for this experiment: ' + roboid)
 
     for banner_line in log_banner('Begin execution of ' + __file__):
         logging.info(banner_line)
         
-    layfile = os.path.join(this_file_dir, '181106_kinetics_monitoring.lay')
+    layfile = os.path.join(this_file_dir, 'kinetics_monitoring.lay')
     lmgr = LayoutManager(layfile)
 
     reader_tray = lmgr.assign_unused_resource(ResourceType(Plate96, 'reader_tray_' + roboid))
     rplate_prfx = 'reader_plate_'
-    reader_plates = resource_list_with_prefix(lmgr, rplate_prfx, Plate96, num_plates, order_key=lambda p: int(p.layout_name()[len(rplate_prfx):])) # Order by integer suffix because plate 10 is before plate 2 lexicographically
+    # Order by integer suffix because plate 10 is before plate 2 lexicographically:
+    reader_plates = resource_list_with_prefix(lmgr, rplate_prfx, Plate96, num_plates, order_key=lambda p: int(p.layout_name()[len(rplate_prfx):]))
     print('Plates are ', [p.layout_name() for p in reader_plates])
 
     for p in reader_plates:
@@ -127,10 +147,10 @@ if __name__ == '__main__':
     with HamiltonInterface(simulate=simulation_on) as ham_int, ClarioStar() as reader_int:
         if simulation_on:
             reader_int.disable()
-        ham_int.set_log_dir(os.path.join(local_log_dir, 'hamilton.log'))
+        ham_int.set_log_dir(os.path.join(local_log_dir, roboid + '_hamilton.log'))
         initialize(ham_int)
-        #if not simulation_on: TODO: put back
-        #    hepa_on(ham_int, speed=20)
+        if not simulation_on:
+            hepa_on(ham_int, speed=20)
         
         # loop over plates and read them
         while True:
@@ -143,4 +163,3 @@ if __name__ == '__main__':
                         db_add_plate_data(db_name, platedata[i], protocols[i], plate)
                 except oemerr.LabwareError:
                     print ("Skipping this plate", plate.layout_name())
-            #time.sleep(2*30) #we don't want this.
