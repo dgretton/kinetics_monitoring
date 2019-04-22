@@ -34,8 +34,11 @@ def filepaths(directory):
 dbs = (filepath for filepath in filepaths(this_user_dir)
         if filepath.lower().endswith('.db'))
 latest = max(dbs, key=os.path.getctime)
-Tk().withdraw() # keep the window from appearing
+tkroot = Tk()
+tkroot.withdraw() # keep the window from appearing
+tkroot.update()
 db_name = askopenfilename(initialdir=os.path.dirname(latest), title="Select database file", filetypes=((".db files","*.db"),("all files","*.*")))
+tkroot.destroy()
 if not db_name:
     print('Cancel.')
     exit()
