@@ -15,7 +15,7 @@ from tkinter.filedialog import askopenfilename
 number_of_turb = 96
 
 if len(sys.argv) < 2:
-    msg = 'Must supply user name as first argument.'
+    msg = msg = 'Must supply user name as first argument. See https://paper.dropbox.com/doc/Kinetics-Monitoring-How-To--AbdTX86V2M08Kl~W1zlcNGGZAg-IeJqIgS2n5Xwbaj5hbWvz#:uid=905621552118760454976077&h2=Run-the-method for help.'
     print(msg)
     msgbox(msg)
     exit()
